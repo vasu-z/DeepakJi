@@ -16,15 +16,18 @@ class Settings(BaseSettings):
 
     # CORS configuration
     CORS_ORIGINS: List[str] = [
+        "*",
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "http://localhost:8081",
     ]
     CORS_ALLOW_CREDENTIALS: bool = False
 
     # Gemini / Gemma API configuration
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
+    GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
     ENABLE_AI_MOCK: bool = False
 
     # Valhalla Open-Source Routing Engine configuration
@@ -33,8 +36,19 @@ class Settings(BaseSettings):
 
     @property
     def is_gemini_configured(self) -> bool:
-        """Check if a non-empty Gemini API key is configured."""
-        return bool(self.GEMINI_API_KEY and self.GEMINI_API_KEY.strip())
+        """Check if a non-empty Gemini API key or Google Cloud ADC is configured."""
+        if bool(self.GEMINI_API_KEY and self.GEMINI_API_KEY.strip()):
+            return True
+        gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if gac and os.path.isfile(gac):
+            return True
+        adc_win = os.path.expandvars(r"%APPDATA%\gcloud\application_default_credentials.json")
+        if os.path.isfile(adc_win):
+            return True
+        adc_unix = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+        if os.path.isfile(adc_unix):
+            return True
+        return False
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -58,9 +72,14 @@ class Settings(BaseSettings):
     @classmethod
     def resolve_gemini_key_fallback(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            # Fall back to GOOGLE_API_KEY if GEMINI_API_KEY is not provided
-            if not data.get("GEMINI_API_KEY"):
-                google_key = data.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            # Fall back to GOOGLE_API_KEY or GEMINI_KEY only if GEMINI_API_KEY is not explicitly set
+            if data.get("GEMINI_API_KEY") is None and "GEMINI_API_KEY" not in os.environ:
+                google_key = (
+                    data.get("GOOGLE_API_KEY")
+                    or os.getenv("GOOGLE_API_KEY")
+                    or data.get("GEMINI_KEY")
+                    or os.getenv("GEMINI_KEY")
+                )
                 if google_key:
                     data["GEMINI_API_KEY"] = google_key
         return data

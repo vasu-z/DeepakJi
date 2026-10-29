@@ -24,6 +24,9 @@ export type VoiceIntentType =
   | "summarize_this"
   | "scan_again"
   | "what_is_ahead"
+  | "find_object"
+  | "what_changed"
+  | "describe_again"
   | "where_am_i"
   | "what_can_i_do"
   | "next_class"
@@ -59,6 +62,7 @@ export interface ParsedVoiceCommand {
   targetScreen?: AppScreen;
   destinationQuery?: string;
   categoryQuery?: string;
+  targetObject?: string;
   readingMode?: "auto" | "timetable" | "sign" | "notice" | "surroundings";
   confidence: number;
 }
@@ -537,7 +541,7 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
     };
   }
 
-  // 6h. OPEN LIVE CAMERA ASSIST
+  // 6h. OPEN LIVE CAMERA ASSIST / SCENE UNDERSTANDING
   if (
     cleaned === "open live assist" ||
     cleaned === "open camera assist" ||
@@ -550,7 +554,11 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
     cleaned === "open assist" ||
     cleaned === "assist" ||
     cleaned === "go to live assist" ||
-    cleaned === "go to camera assist"
+    cleaned === "go to camera assist" ||
+    cleaned === "open scene understanding" ||
+    cleaned === "start scene understanding" ||
+    cleaned === "scene understanding" ||
+    cleaned === "turn on scene understanding"
   ) {
     return {
       intent: "open_assist",
@@ -558,6 +566,67 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
       targetScreen: "assist",
       confidence: 0.98,
     };
+  }
+
+  // 6i. WHAT CHANGED intent
+  if (
+    cleaned === "what changed" ||
+    cleaned === "what has changed" ||
+    cleaned === "did anything change" ||
+    cleaned.includes("what changed")
+  ) {
+    return {
+      intent: "what_changed",
+      rawTranscript: transcript,
+      confidence: 0.98,
+    };
+  }
+
+  // 6j. DESCRIBE AGAIN intent
+  if (
+    cleaned === "describe again" ||
+    cleaned === "describe scene again" ||
+    cleaned === "re describe" ||
+    cleaned === "describe once more"
+  ) {
+    return {
+      intent: "describe_again",
+      rawTranscript: transcript,
+      confidence: 0.98,
+    };
+  }
+
+  // 6k. TARGETED OBJECT SEARCH intent ("Where are my keys?")
+  const findObjectPatterns = [
+    /^where (?:are|is) (?:my|the|a)?\s*(.+)$/,
+    /^find (?:my|the|a)?\s*(.+)$/,
+    /^can you see (?:my|the|a)?\s*(.+)$/,
+    /^do you see (?:my|the|a)?\s*(.+)$/,
+    /^look for (?:my|the|a)?\s*(.+)$/,
+  ];
+  for (const pattern of findObjectPatterns) {
+    const match = cleaned.match(pattern);
+    if (match && match[1]) {
+      const obj = match[1].trim();
+      if (
+        obj.length >= 2 &&
+        !cleaned.includes("nearby") &&
+        !cleaned.includes("nearest") &&
+        !obj.startsWith("next class") &&
+        !obj.startsWith("i am") &&
+        !obj.startsWith("i") &&
+        !obj.startsWith("campus") &&
+        !obj.startsWith("to the") &&
+        !obj.startsWith("to ")
+      ) {
+        return {
+          intent: "find_object",
+          rawTranscript: transcript,
+          targetObject: obj,
+          confidence: 0.98,
+        };
+      }
+    }
   }
 
   // 7. READ THE TIMETABLE intent (specific scanner mode)

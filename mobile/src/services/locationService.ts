@@ -11,7 +11,16 @@
  * - Full cleanup: Cleans up watchPositionAsync subscriptions on stop and unmount.
  */
 
-import * as Location from "expo-location";
+import type { LocationObject, LocationSubscription } from "expo-location";
+
+let LocationModule: any = null;
+try {
+  LocationModule = require("expo-location");
+} catch {
+  LocationModule = null;
+}
+
+const Location = LocationModule;
 
 export type GpsAccuracyLevel = "excellent" | "good" | "moderate" | "poor" | "unusable" | "lost";
 
@@ -59,7 +68,7 @@ export const CU_CAMPUS_VIEWPORT_CENTER = {
 };
 
 export class LocationService {
-  private subscription: Location.LocationSubscription | null = null;
+  private subscription: any = null;
   private lastLocation: RealGpsLocation | null = null;
   private locationListeners: Set<LocationCallback> = new Set();
   private diagnosticsListeners: Set<DiagnosticsCallback> = new Set();
@@ -85,6 +94,7 @@ export class LocationService {
    * Check if location services (GPS hardware) are enabled on the device.
    */
   public async checkServicesEnabled(): Promise<boolean> {
+    if (!Location) return false;
     try {
       return await Location.hasServicesEnabledAsync();
     } catch {
@@ -96,6 +106,14 @@ export class LocationService {
    * Request foreground location permission with accessible reason.
    */
   public async requestPermissions(): Promise<LocationPermissionStatus> {
+    if (!Location) {
+      return {
+        granted: false,
+        canAskAgain: false,
+        servicesEnabled: false,
+        errorMessage: "Location hardware module is not available on this device build.",
+      };
+    }
     try {
       const servicesEnabled = await this.checkServicesEnabled();
       if (!servicesEnabled) {
@@ -108,12 +126,12 @@ export class LocationService {
       }
 
       const { status, canAskAgain } = await Location.getForegroundPermissionsAsync();
-      if (status === Location.PermissionStatus.GRANTED) {
+      if (status === Location.PermissionStatus?.GRANTED || status === "granted") {
         return { granted: true, canAskAgain, servicesEnabled: true };
       }
 
       const requested = await Location.requestForegroundPermissionsAsync();
-      const granted = requested.status === Location.PermissionStatus.GRANTED;
+      const granted = requested.status === Location.PermissionStatus?.GRANTED || requested.status === "granted";
 
       return {
         granted,
@@ -192,7 +210,7 @@ export class LocationService {
           timeInterval: 1500, // 1.5 seconds between fixes
           distanceInterval: 2, // 2 meters movement threshold
         },
-        (pos) => {
+        (pos: LocationObject) => {
           const fix = this.transformExpoPosition(pos);
           this.lastLocation = fix;
           this.fixCount++;
@@ -269,7 +287,7 @@ export class LocationService {
     };
   }
 
-  private transformExpoPosition(pos: Location.LocationObject): RealGpsLocation {
+  private transformExpoPosition(pos: LocationObject): RealGpsLocation {
     const acc = pos.coords.accuracy ?? 99.0;
     const isStale = Date.now() - pos.timestamp > 15000;
     return {

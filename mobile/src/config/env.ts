@@ -5,8 +5,19 @@
  * All AI and external requests must go through the backend server.
  */
 
-// Default to the computer's LAN IP on port 8000 for physical phone access
-export const DEFAULT_BACKEND_URL = "http://192.168.1.42:8000";
+// Candidate URLs in priority order:
+// 1. 127.0.0.1:8000 (USB ADB reverse — zero latency, bypasses Wi-Fi router & firewall blocks)
+// 2. 192.168.29.99:8000 (Computer's Wi-Fi LAN IP)
+// 3. localhost:8000 (Device localhost)
+// 4. 10.0.2.2:8000 (Android emulator host loopback)
+export const CANDIDATE_BACKEND_URLS = [
+  "http://127.0.0.1:8000",
+  "http://192.168.29.99:8000",
+  "http://localhost:8000",
+  "http://10.0.2.2:8000",
+];
+
+export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
 
 let currentBackendUrl = DEFAULT_BACKEND_URL;
 

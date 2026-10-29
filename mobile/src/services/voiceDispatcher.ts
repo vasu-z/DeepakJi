@@ -13,6 +13,7 @@ import {
 import type { AppScreen } from "../../App";
 import { speechService } from "./speech";
 import { readingPipeline, ReadingPipelineResult } from "./readingPipeline";
+import { liveAssistService } from "./liveAssistService";
 
 export interface VoiceCommandDispatchContext {
   currentScreen: AppScreen;
@@ -407,8 +408,51 @@ export async function dispatchVoiceCommand(
     }
 
 
+    case "find_object": {
+      const target = parsed.targetObject || "keys";
+      if (currentScreen !== "assist") {
+        await speechService.speak(
+          `Opening Scene Understanding to search for ${target}.`,
+          { force: true }
+        );
+        if (context.onNavigateToAssist) {
+          context.onNavigateToAssist();
+        } else if (context.onNavigateToScreen) {
+          context.onNavigateToScreen("assist");
+        }
+      }
+      return await liveAssistService.searchTargetObject(target);
+    }
+
+    case "what_changed": {
+      if (currentScreen !== "assist") {
+        await speechService.speak("Opening Scene Understanding.", { force: true });
+        if (context.onNavigateToAssist) {
+          context.onNavigateToAssist();
+        } else if (context.onNavigateToScreen) {
+          context.onNavigateToScreen("assist");
+        }
+      }
+      return await liveAssistService.whatChanged();
+    }
+
+    case "describe_again": {
+      if (currentScreen !== "assist") {
+        await speechService.speak("Opening Scene Understanding.", { force: true });
+        if (context.onNavigateToAssist) {
+          context.onNavigateToAssist();
+        } else if (context.onNavigateToScreen) {
+          context.onNavigateToScreen("assist");
+        }
+      }
+      return await liveAssistService.describeNow();
+    }
+
     case "what_is_ahead": {
-      const desc = "Opening Live Camera Assist with Gemma 4 vision.";
+      if (currentScreen === "assist") {
+        return await liveAssistService.describeNow();
+      }
+      const desc = "Opening Saarthi Scene Understanding.";
       await speechService.speak(desc, { force: true });
       if (context.onNavigateToAssist) {
         context.onNavigateToAssist();
@@ -422,6 +466,10 @@ export async function dispatchVoiceCommand(
 
     case "unknown":
     default: {
+      if (currentScreen === "assist" && parsed.rawTranscript && parsed.rawTranscript.trim()) {
+        console.log(`[DIAGNOSTIC VOICE] Forwarding spoken query on assist screen to Gemini Live: "${parsed.rawTranscript.trim()}"`);
+        return await liveAssistService.describeNow(parsed.rawTranscript.trim());
+      }
       const msg = `I did not recognize the command "${parsed.rawTranscript}". Try asking "Where am I?", "What can I do here?", "Go Home", or "Open Reader".`;
       await speechService.speak(msg, { force: true });
       return msg;

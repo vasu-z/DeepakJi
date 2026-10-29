@@ -79,6 +79,7 @@ interface CornerTileProps {
   line1: string;
   line2: string;
   onPress: () => Promise<void> | void;
+  onLongPress?: () => Promise<void> | void;
   accessibilityLabel: string;
   accessibilityHint: string;
 }
@@ -89,6 +90,7 @@ const CornerTile: React.FC<CornerTileProps> = ({
   line1,
   line2,
   onPress,
+  onLongPress,
   accessibilityLabel,
   accessibilityHint,
 }) => {
@@ -99,6 +101,7 @@ const CornerTile: React.FC<CornerTileProps> = ({
     <View style={styles.tileOuterWrapper}>
       <Pressable
         onPress={onPress}
+        onLongPress={onLongPress}
         accessible={true}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
@@ -403,8 +406,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             line1="Read"
             line2="Anything"
             onPress={handleReadCampusText}
-            accessibilityLabel="Read Anything. Top-left corner. Double-tap to open camera and read text, door signs, notice boards, or class timetables."
-            accessibilityHint="Opens camera reader with automatic text and timetable extraction"
+            onLongPress={async () => {
+              await hapticsService.triggerTopLeft();
+              onNavigate("assist");
+            }}
+            accessibilityLabel="Read Anything. Top-left corner. Double-tap to open camera and read text, door signs, notice boards, or class timetables. Long-press to launch Live Scene Understanding."
+            accessibilityHint="Opens camera reader with automatic text and timetable extraction, or long press for Live Scene Understanding"
           />
 
           <CornerTile

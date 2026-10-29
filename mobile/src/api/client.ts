@@ -1,4 +1,4 @@
-import { getBackendBaseUrl, setBackendBaseUrl } from "../config/env";
+import { getBackendBaseUrl, setBackendBaseUrl, CANDIDATE_BACKEND_URLS } from "../config/env";
 
 export { getBackendBaseUrl as getApiBaseUrl, setBackendBaseUrl as setCustomApiBaseUrl };
 export { checkAIStatus as getAiStatus };
@@ -46,12 +46,22 @@ export interface DetectedTextItem {
   confidence: number;
 }
 
+export interface GroundedObjectSearchResult {
+  is_found: boolean;
+  target_object: string;
+  relative_frame_position?: string;
+  confidence: number;
+  next_action: "located" | "sweep_camera" | "improve_lighting" | "continue_scanning";
+  spoken_description: string;
+}
+
 export interface SceneAnalysisResponse {
   status: string;
   model: string;
   spoken_description: string;
   objects: DetectedObject[];
   detected_texts: DetectedTextItem[];
+  search_result?: GroundedObjectSearchResult;
   spatial_description?: string;
   uncertainties: string[];
   unchecked_areas: string[];
@@ -145,15 +155,55 @@ async function fetchWithTimeout(
     });
     return response;
   } catch (error: any) {
-    if (error.name === "AbortError") {
-      if (timedOut) {
-        throw new Error(
-          `Connection timed out (${timeoutMs / 1000}s). Verify your phone and PC are on the same Wi-Fi network and firewall allows port 8000.`
-        );
-      }
+    if (externalSignal?.aborted) {
       const cancelErr = new Error("Request cancelled.");
       cancelErr.name = "AbortError";
       throw cancelErr;
+    }
+
+    // Auto-failover: if this was a backend URL request that failed due to network / connectivity issues,
+    // seamlessly probe the remaining candidates to find the live connection (e.g. USB ADB reverse vs Wi-Fi).
+    const currentBase = getBackendBaseUrl();
+    if (url.startsWith(currentBase)) {
+      const pathAndQuery = url.slice(currentBase.length);
+      const candidates = CANDIDATE_BACKEND_URLS.filter((c) => c !== currentBase);
+      for (const candidate of candidates) {
+        if (externalSignal?.aborted) break;
+        try {
+          const fallbackUrl = `${candidate}${pathAndQuery}`;
+          const fallbackCtrl = new AbortController();
+          const fallbackTimer = setTimeout(() => fallbackCtrl.abort(), Math.min(timeoutMs, 2500));
+          if (externalSignal) {
+            externalSignal.addEventListener("abort", () => fallbackCtrl.abort());
+          }
+          const fbResponse = await fetch(fallbackUrl, {
+            ...options,
+            signal: fallbackCtrl.signal,
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              ...(options.headers || {}),
+            },
+          });
+          clearTimeout(fallbackTimer);
+          if (fbResponse) {
+            setBackendBaseUrl(candidate);
+            console.log(`[SAARTHI Client] Auto-recovered backend connection via: ${candidate}`);
+            return fbResponse;
+          }
+        } catch {
+          // Probe next candidate
+        }
+      }
+    }
+
+    if (error.name === "AbortError") {
+      if (timedOut) {
+        throw new Error(
+          `Connection timed out (${timeoutMs / 1000}s). Ensure backend is running and phone is connected.`
+        );
+      }
+      throw error;
     }
     throw error;
   } finally {
@@ -173,18 +223,25 @@ export async function checkBackendHealth(): Promise<HealthResponse> {
     if (!response.ok) {
       throw new Error(`Backend returned HTTP status ${response.status}`);
     }
-    return (await response.json()) as HealthResponse;
+    const data = await response.json();
+    return {
+      status: data.status || "ok",
+      service: data.service || "saarthi-backend",
+      version: data.version || "0.1.0",
+    } as HealthResponse;
   } catch (error: any) {
-    // If configured baseUrl failed, probe USB reverse (127.0.0.1) and current Wi-Fi LAN (192.168.1.42)
-    const fallbacks = ["http://127.0.0.1:8000", "http://192.168.1.42:8000", "http://localhost:8000"].filter(
-      (fb) => fb !== baseUrl
-    );
+    const fallbacks = CANDIDATE_BACKEND_URLS.filter((fb) => fb !== baseUrl);
     for (const fb of fallbacks) {
       try {
-        const fbResp = await fetchWithTimeout(`${fb}/api/v1/health`, undefined, 1500);
+        const fbResp = await fetchWithTimeout(`${fb}/api/v1/health`, undefined, 2000);
         if (fbResp.ok) {
           setBackendBaseUrl(fb);
-          return (await fbResp.json()) as HealthResponse;
+          const data = await fbResp.json();
+          return {
+            status: data.status || "ok",
+            service: data.service || "saarthi-backend",
+            version: data.version || "0.1.0",
+          } as HealthResponse;
         }
       } catch {
         // Continue to next fallback
@@ -208,7 +265,12 @@ export async function checkAIStatus(): Promise<AIStatusResponse> {
     if (!response.ok) {
       throw new Error(`AI status check failed with HTTP ${response.status}`);
     }
-    return (await response.json()) as AIStatusResponse;
+    const data = await response.json();
+    return {
+      configured: Boolean(data.configured ?? data.is_configured ?? data.gemini_ready),
+      model: data.model || data.primary_model || "gemini-3.1-flash-lite",
+      mock_mode: Boolean(data.mock_mode),
+    };
   } catch (error: any) {
     throw new Error(
       error.message || "Failed to query AI configuration status."
@@ -361,7 +423,9 @@ export async function analyzeSceneAssist(
   imageBase64: string,
   query?: string,
   mimeType: string = "image/jpeg",
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  targetObject?: string,
+  previousDescription?: string
 ): Promise<SceneAnalysisResponse> {
   const baseUrl = getBackendBaseUrl();
   const url = `${baseUrl}/api/v1/ai/scene-assist`;
@@ -369,6 +433,8 @@ export async function analyzeSceneAssist(
   const payload: {
     image_base64: string;
     query?: string;
+    target_object?: string;
+    previous_description?: string;
     mime_type: string;
   } = {
     image_base64: imageBase64,
@@ -377,6 +443,12 @@ export async function analyzeSceneAssist(
 
   if (query && query.trim()) {
     payload.query = query.trim();
+  }
+  if (targetObject && targetObject.trim()) {
+    payload.target_object = targetObject.trim();
+  }
+  if (previousDescription && previousDescription.trim()) {
+    payload.previous_description = previousDescription.trim();
   }
 
   try {
@@ -403,6 +475,167 @@ export async function analyzeSceneAssist(
     }
     throw new Error(error.message || "Failed to analyze scene with Gemma 4.");
   }
+}
+
+export interface LiveWsCallbacks {
+  onSessionState?: (state: { status: string; sessionId?: string; model?: string }) => void;
+  onDescription?: (description: {
+    spokenDescription: string;
+    confidence?: number;
+    imageQuality?: string;
+    seq?: number;
+    uncertainties?: string[];
+    uncheckedAreas?: string[];
+  }) => void;
+  onSearchResult?: (result: GroundedObjectSearchResult, seq?: number) => void;
+  onError?: (err: { error: string; recoverable?: boolean; spokenDescription?: string }) => void;
+  onClosed?: () => void;
+}
+
+export interface SceneLiveWebSocketSession {
+  sendFrame: (base64Data: string, mimeType?: string, seq?: number) => void;
+  sendQuery: (queryText: string, targetObject?: string, frameBase64?: string, mimeType?: string) => void;
+  activate: (targetObject?: string) => void;
+  pause: () => void;
+  resume: () => void;
+  stop: () => void;
+  close: () => void;
+  isConnected: () => boolean;
+}
+
+/**
+ * Creates a server-managed WebSocket live session for low-latency scene understanding.
+ */
+export function createSceneLiveWebSocket(callbacks: LiveWsCallbacks): SceneLiveWebSocketSession {
+  const baseUrl = getBackendBaseUrl();
+  const wsUrl = baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/api/v1/ai/scene-live-ws";
+
+  let socket: WebSocket | null = null;
+  let isOpen = false;
+  const outboundQueue: any[] = [];
+
+  const sendJson = (data: any) => {
+    if (socket && isOpen && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(data));
+    } else {
+      outboundQueue.push(data);
+    }
+  };
+
+  try {
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      isOpen = true;
+      console.log("[SceneLiveWS] Connected to", wsUrl);
+      while (outboundQueue.length > 0) {
+        const item = outboundQueue.shift();
+        if (item && socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(item));
+        }
+      }
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "session_state") {
+          callbacks.onSessionState?.({
+            status: msg.status || "active",
+            sessionId: msg.session_id,
+            model: msg.model,
+          });
+        } else if (msg.type === "description") {
+          callbacks.onDescription?.({
+            spokenDescription: msg.spoken_description,
+            confidence: msg.confidence,
+            imageQuality: msg.image_quality,
+            seq: msg.seq,
+            uncertainties: msg.uncertainties,
+            uncheckedAreas: msg.unchecked_areas,
+          });
+        } else if (msg.type === "object_search_result") {
+          if (msg.search_result) {
+            callbacks.onSearchResult?.(msg.search_result, msg.seq);
+          }
+        } else if (msg.type === "error") {
+          callbacks.onError?.({
+            error: msg.error || "Vision service error",
+            recoverable: msg.recoverable !== false,
+            spokenDescription: msg.spoken_description,
+          });
+        } else if (msg.type === "session_terminated") {
+          callbacks.onClosed?.();
+        }
+      } catch (err) {
+        console.warn("[SceneLiveWS] Error parsing message:", err);
+      }
+    };
+
+    socket.onerror = (err: any) => {
+      console.warn("[SceneLiveWS] WebSocket error:", err?.message || err);
+      callbacks.onError?.({
+        error: "Live WebSocket connection error. Degrading to standard vision fallback.",
+        recoverable: true,
+      });
+    };
+
+    socket.onclose = () => {
+      isOpen = false;
+      callbacks.onClosed?.();
+    };
+  } catch (err) {
+    console.warn("[SceneLiveWS] Socket initialization error:", err);
+  }
+
+  return {
+    sendFrame: (base64Data: string, mimeType: string = "image/jpeg", seq: number = 0) => {
+      sendJson({
+        type: "frame",
+        image_base64: base64Data,
+        mime_type: mimeType,
+        seq,
+        timestamp: Date.now() / 1000,
+      });
+    },
+    sendQuery: (queryText: string, targetObject?: string, frameBase64?: string, mimeType?: string) => {
+      sendJson({
+        type: "query",
+        query: queryText,
+        target_object: targetObject,
+        image_base64: frameBase64,
+        mime_type: mimeType || "image/jpeg",
+        timestamp: Date.now() / 1000,
+      });
+    },
+    activate: (targetObject?: string) => {
+      sendJson({
+        type: "activate",
+        target_object: targetObject,
+      });
+    },
+    pause: () => {
+      sendJson({ type: "pause" });
+    },
+    resume: () => {
+      sendJson({ type: "resume" });
+    },
+    stop: () => {
+      sendJson({ type: "stop" });
+    },
+    close: () => {
+      if (socket) {
+        try {
+          socket.close();
+        } catch {
+          // Safe ignore
+        }
+        socket = null;
+        isOpen = false;
+      }
+    },
+    isConnected: () => isOpen,
+  };
 }
 
 

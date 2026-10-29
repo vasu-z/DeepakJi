@@ -207,4 +207,197 @@ describe("LiveAssistService", () => {
       expect(service.getState().error).toContain("Network connection lost");
     });
   });
+
+  describe("Feature 01: Lifecycle & Spoken Announcements", () => {
+    it("speaks exact greeting on activation and transitions to active", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "test_frame",
+        mimeType: "image/jpeg",
+      }));
+
+      await service.startLiveAssist();
+
+      expect(mockSpeak).toHaveBeenCalledWith(
+        "Saarthi scene understanding is on. Point your camera around; ask me anything.",
+        expect.objectContaining({ force: true })
+      );
+      expect(service.getState().status).toBe("active");
+      expect(service.getState().isSamplingActive).toBe(true);
+    });
+
+    it("speaks exact stop message and cleans up on stop", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "test_frame",
+        mimeType: "image/jpeg",
+      }));
+
+      await service.startLiveAssist();
+      mockSpeak.mockClear();
+
+      await service.stop();
+
+      expect(mockSpeak).toHaveBeenCalledWith(
+        "Scene understanding stopped.",
+        expect.objectContaining({ force: true })
+      );
+      expect(service.getState().status).toBe("idle");
+      expect(service.getState().isSamplingActive).toBe(false);
+    });
+
+    it("supports pause and resume with clear audible feedback", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "test_frame",
+        mimeType: "image/jpeg",
+      }));
+
+      await service.startLiveAssist();
+      mockSpeak.mockClear();
+
+      // Pause
+      await service.pauseLiveAssist();
+      expect(service.getState().status).toBe("paused");
+      expect(service.getState().isSamplingActive).toBe(false);
+      expect(mockSpeak).toHaveBeenCalledWith(
+        expect.stringContaining("Scene understanding paused"),
+        expect.objectContaining({ force: true })
+      );
+
+      mockSpeak.mockClear();
+
+      // Resume
+      await service.resumeLiveAssist();
+      expect(service.getState().status).toBe("active");
+      expect(service.getState().isSamplingActive).toBe(true);
+      expect(mockSpeak).toHaveBeenCalledWith(
+        "Scene understanding resumed.",
+        expect.objectContaining({ force: true })
+      );
+    });
+  });
+
+  describe("Feature 01: Grounded Object Search ('Where are my keys?')", () => {
+    it("reports grounded relative position when object is found", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "frame_with_keys",
+        mimeType: "image/jpeg",
+      }));
+
+      mockAnalyzeScene.mockResolvedValueOnce({
+        status: "success",
+        model: "Gemma 4",
+        spoken_description: "I found your keys near the lower-left side of the table.",
+        objects: [
+          {
+            name: "keys",
+            confidence: 0.94,
+            relative_position: "lower-left",
+            bounding_box: [0.65, 0.15, 0.8, 0.35],
+          },
+        ],
+        detected_texts: [],
+        uncertainties: [],
+        unchecked_areas: ["floor beneath table"],
+        image_quality: "good",
+        needs_rescan: false,
+        confidence: 0.94,
+        search_result: {
+          is_found: true,
+          target_object: "keys",
+          relative_frame_position: "lower-left",
+          confidence: 0.94,
+          spoken_description: "I found your keys near the lower-left side of the table.",
+          sweep_guidance: null,
+          next_action: "reached",
+        },
+      } as any);
+
+      const result = await service.searchTargetObject("keys");
+
+      expect(result).toContain("lower-left");
+      expect(mockSpeak).toHaveBeenCalledWith(
+        expect.stringContaining("lower-left"),
+        expect.objectContaining({ force: true })
+      );
+      expect(service.getState().lastSearchResult?.is_found).toBe(true);
+      expect(service.getState().lastSearchResult?.relative_frame_position).toBe("lower-left");
+    });
+
+    it("speaks sweep guidance when object is not yet visible", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "frame_without_keys",
+        mimeType: "image/jpeg",
+      }));
+
+      mockAnalyzeScene.mockResolvedValueOnce({
+        status: "success",
+        model: "Gemma 4",
+        spoken_description: "I can't see the keys clearly yet. Slowly sweep the camera across the nearby surfaces and I'll keep checking.",
+        objects: [],
+        detected_texts: [],
+        uncertainties: ["keys not in field of view"],
+        unchecked_areas: ["left and right periphery"],
+        image_quality: "good",
+        needs_rescan: false,
+        confidence: 0.88,
+        search_result: {
+          is_found: false,
+          target_object: "keys",
+          relative_frame_position: null,
+          confidence: 0.88,
+          spoken_description: "I can't see the keys clearly yet. Slowly sweep the camera across the nearby surfaces and I'll keep checking.",
+          sweep_guidance: "Slowly sweep the camera across the nearby surfaces and I'll keep checking.",
+          next_action: "sweep_camera",
+        },
+      } as any);
+
+      const result = await service.searchTargetObject("keys");
+
+      expect(result).toContain("Slowly sweep");
+      expect(mockSpeak).toHaveBeenCalledWith(
+        expect.stringContaining("Slowly sweep"),
+        expect.objectContaining({ force: true })
+      );
+      expect(service.getState().isSearching).toBe(true);
+    });
+
+    it("stops searching and speaks conclusion after sweep limit is reached", async () => {
+      service.registerFrameCapture(async () => ({
+        base64: "frame_without_keys",
+        mimeType: "image/jpeg",
+      }));
+
+      mockAnalyzeScene.mockResolvedValue({
+        status: "success",
+        model: "Gemma 4",
+        spoken_description: "No keys visible yet.",
+        objects: [],
+        detected_texts: [],
+        uncertainties: [],
+        unchecked_areas: [],
+        image_quality: "good",
+        needs_rescan: false,
+        confidence: 0.85,
+        search_result: {
+          is_found: false,
+          target_object: "keys",
+          relative_frame_position: null,
+          confidence: 0.85,
+          spoken_description: "No keys visible yet.",
+          sweep_guidance: "Slowly sweep the camera.",
+          next_action: "sweep_camera",
+        },
+      } as any);
+
+      // Perform sweeps up to MAX_SWEEP_ATTEMPTS (5)
+      let finalResult = "";
+      for (let i = 0; i < 5; i++) {
+        finalResult = await service.searchTargetObject("keys");
+      }
+
+      expect(finalResult).toContain("still can't see the keys");
+      expect(service.getState().isSearching).toBe(false);
+      expect(service.getState().activeTargetObject).toBeNull();
+    });
+  });
 });
+

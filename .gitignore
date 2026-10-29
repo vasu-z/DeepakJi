@@ -47,3 +47,16 @@ mobile/android/
 # OS
 .DS_Store
 Thumbs.db
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules/
+**/.venv/
+**/venv/
+**/.expo/
+**/coverage/
+**/__pycache__/
+**/.gradle/
+**/Pods/
+**/application_default_credentials.json
+**/*service-account*.json

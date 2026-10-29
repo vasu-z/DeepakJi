@@ -6,4 +6,7 @@ module.exports = {
   transform: {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "tsconfig.json" }],
   },
+  moduleNameMapper: {
+    "^expo-haptics$": "<rootDir>/src/__mocks__/expo-haptics.ts",
+  },
 };

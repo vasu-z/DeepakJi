@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 import httpx
 from google import genai
@@ -29,14 +30,35 @@ class GeminiCredentialsMissingException(GeminiServiceException):
 
 
 def get_gemini_client(
-    api_key: Optional[str],
+    api_key: Optional[str] = None,
     timeout_ms: int = DEFAULT_REQUEST_TIMEOUT_MS,
 ) -> genai.Client:
     """Initialize and return an official google-genai Client with safe timeout."""
-    if not api_key or not api_key.strip():
-        raise GeminiCredentialsMissingException()
     http_options = types.HttpOptions(timeout=timeout_ms)
-    return genai.Client(api_key=api_key.strip(), http_options=http_options)
+    if api_key and api_key.strip():
+        return genai.Client(api_key=api_key.strip(), http_options=http_options)
+
+    # Check for Application Default Credentials (ADC) fallback without hanging on metadata probe
+    has_adc = False
+    gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if gac and os.path.isfile(gac):
+        has_adc = True
+    else:
+        adc_win = os.path.expandvars(r"%APPDATA%\gcloud\application_default_credentials.json")
+        adc_unix = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+        if os.path.isfile(adc_win) or os.path.isfile(adc_unix):
+            has_adc = True
+
+    if has_adc:
+        try:
+            import google.auth
+            credentials, _ = google.auth.default()
+            if credentials:
+                return genai.Client(http_options=http_options)
+        except Exception:
+            pass
+
+    raise GeminiCredentialsMissingException()
 
 
 def generate_text(prompt: str, api_key: Optional[str], model: str) -> str:

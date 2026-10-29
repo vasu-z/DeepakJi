@@ -5,13 +5,10 @@ import {
   Text,
   Pressable,
   ActivityIndicator,
-  useWindowDimensions,
-  LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions, PermissionResponse } from "expo-camera";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import Svg, { Path } from "react-native-svg";
 import { Colors } from "../theme/colors";
 import { speechService } from "../services/speech";
 import { hapticsService } from "../services/haptics";
@@ -47,68 +44,44 @@ const SURROUNDINGS_DIAMETER = 140;
 const SURROUNDINGS_RADIUS = SURROUNDINGS_DIAMETER / 2; // 70dp
 const OUTER_CORNER_RADIUS = 28;
 
-/**
- * Generates an SVG path for each corner panel with:
- * - 3 convex rounded outer corners (radius = outerRadius)
- * - 1 organic, fluid concave cutout facing the center Surroundings circle
- */
-function getPanelSvgPath(
-  position: "topLeft" | "topRight" | "bottomLeft" | "bottomRight",
-  W: number,
-  H: number,
-  outerRadius: number = OUTER_CORNER_RADIUS
-): string {
-  if (W <= 0 || H <= 0) return "";
-  const R_out = Math.min(outerRadius, W / 2, H / 2);
-
-  // Organic concave scoop curving around the central Surroundings circle with ~12-14dp clearance
-  const reachX = Math.min(84, W - R_out - 4);
-  const reachY = Math.min(56, H - R_out - 4);
-  const cpX = Math.round(reachX * 0.52); // ~44
-  const cpY = Math.round(reachY * 0.5); // ~28
-
-  switch (position) {
-    case "topLeft":
-      return (
-        `M ${R_out} 0 ` +
-        `L ${W - R_out} 0 A ${R_out} ${R_out} 0 0 1 ${W} ${R_out} ` +
-        `L ${W} ${H - reachY} ` +
-        `C ${W} ${H - cpY}, ${W - cpX} ${H}, ${W - reachX} ${H} ` +
-        `L ${R_out} ${H} A ${R_out} ${R_out} 0 0 1 0 ${H - R_out} ` +
-        `L 0 ${R_out} A ${R_out} ${R_out} 0 0 1 ${R_out} 0 Z`
-      );
-
-    case "topRight":
-      return (
-        `M ${R_out} 0 ` +
-        `L ${W - R_out} 0 A ${R_out} ${R_out} 0 0 1 ${W} ${R_out} ` +
-        `L ${W} ${H - R_out} A ${R_out} ${R_out} 0 0 1 ${W - R_out} ${H} ` +
-        `L ${reachX} ${H} ` +
-        `C ${cpX} ${H}, 0 ${H - cpY}, 0 ${H - reachY} ` +
-        `L 0 ${R_out} A ${R_out} ${R_out} 0 0 1 ${R_out} 0 Z`
-      );
-
-    case "bottomLeft":
-      return (
-        `M ${R_out} 0 ` +
-        `L ${W - reachX} 0 ` +
-        `C ${W - cpX} 0, ${W} ${cpY}, ${W} ${reachY} ` +
-        `L ${W} ${H - R_out} A ${R_out} ${R_out} 0 0 1 ${W - R_out} ${H} ` +
-        `L ${R_out} ${H} A ${R_out} ${R_out} 0 0 1 0 ${H - R_out} ` +
-        `L 0 ${R_out} A ${R_out} ${R_out} 0 0 1 ${R_out} 0 Z`
-      );
-
-    case "bottomRight":
-      return (
-        `M 0 ${reachY} ` +
-        `C 0 ${cpY}, ${cpX} 0, ${reachX} 0 ` +
-        `L ${W - R_out} 0 A ${R_out} ${R_out} 0 0 1 ${W} ${R_out} ` +
-        `L ${W} ${H - R_out} A ${R_out} ${R_out} 0 0 1 ${W - R_out} ${H} ` +
-        `L ${R_out} ${H} A ${R_out} ${R_out} 0 0 1 0 ${H - R_out} ` +
-        `L 0 ${reachY} Z`
-      );
-  }
-}
+const CORNER_PANEL_STYLES = {
+  topLeft: {
+    backgroundColor: "#005CE6",
+    borderColor: "#38BDF8",
+    borderWidth: 1.5,
+    borderTopLeftRadius: OUTER_CORNER_RADIUS,
+    borderTopRightRadius: OUTER_CORNER_RADIUS,
+    borderBottomLeftRadius: OUTER_CORNER_RADIUS,
+    borderBottomRightRadius: 64,
+  },
+  topRight: {
+    backgroundColor: "#00A84D",
+    borderColor: "#4ADE80",
+    borderWidth: 1.5,
+    borderTopRightRadius: OUTER_CORNER_RADIUS,
+    borderTopLeftRadius: OUTER_CORNER_RADIUS,
+    borderBottomRightRadius: OUTER_CORNER_RADIUS,
+    borderBottomLeftRadius: 64,
+  },
+  bottomLeft: {
+    backgroundColor: "#FF5500",
+    borderColor: "#FB923C",
+    borderWidth: 1.5,
+    borderBottomLeftRadius: OUTER_CORNER_RADIUS,
+    borderBottomRightRadius: OUTER_CORNER_RADIUS,
+    borderTopLeftRadius: OUTER_CORNER_RADIUS,
+    borderTopRightRadius: 64,
+  },
+  bottomRight: {
+    backgroundColor: "#7525E6",
+    borderColor: "#C084FC",
+    borderWidth: 1.5,
+    borderBottomRightRadius: OUTER_CORNER_RADIUS,
+    borderBottomLeftRadius: OUTER_CORNER_RADIUS,
+    borderTopRightRadius: OUTER_CORNER_RADIUS,
+    borderTopLeftRadius: 64,
+  },
+} as const;
 
 export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
   initialMode = "auto",
@@ -120,7 +93,6 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
   onOpenLiveAssist,
 }) => {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const cameraRef = useRef<CameraView>(null);
   const [hookPermission, hookRequestPermission] = useCameraPermissions();
@@ -200,28 +172,6 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
   // Layout sizing: calculate responsive section dimensions
   const topInset = Math.max(insets.top, 12);
   const bottomInset = Math.max(insets.bottom, 12);
-  const middleRowHeight = 118;
-
-  const contentWidth = Math.max(windowWidth - SCREEN_PADDING * 2, 200);
-  const availableTilesHeight = Math.max(
-    windowHeight - topInset - middleRowHeight - bottomInset - 16,
-    300
-  );
-
-  const [tilesHeight, setTilesHeight] = useState<number>(availableTilesHeight);
-
-  const panelWidth = Math.max(Math.floor((contentWidth - GRID_GAP) / 2), 100);
-  const panelHeight = Math.max(Math.floor(tilesHeight / 2), 100);
-
-  const onContainerLayout = (e: LayoutChangeEvent) => {
-    const { height } = e.nativeEvent.layout;
-    if (height > 0) {
-      const calculatedTilesHeight = Math.max(height - middleRowHeight - 16, 200);
-      if (Math.abs(calculatedTilesHeight - tilesHeight) > 2) {
-        setTilesHeight(calculatedTilesHeight);
-      }
-    }
-  };
 
   const modeDescriptions: Record<ReadingMode, { title: string; subtitle: string; desc: string }> = {
     auto: {
@@ -559,7 +509,7 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
         )}
 
         {/* Main Content Area Divided into 3 Distinct Vertical Sections */}
-        <View style={styles.mainContentContainer} onLayout={onContainerLayout}>
+        <View style={styles.mainContentContainer}>
           {/* TOP SECTION: Two Equal-Sized Panels Side by Side */}
           <View style={styles.tilesRow}>
             {/* Top-Left: AUTO READ (Blue) */}
@@ -576,24 +526,10 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
                 accessibilityHint="Reads books, handouts, and standard documents"
                 style={({ pressed }) => [
                   styles.tilePressable,
+                  CORNER_PANEL_STYLES.topLeft,
                   pressed && styles.tilePressed,
                 ]}
               >
-                <Svg
-                  width={panelWidth}
-                  height={panelHeight}
-                  viewBox={`0 0 ${panelWidth} ${panelHeight}`}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                >
-                  <Path
-                    d={getPanelSvgPath("topLeft", panelWidth, panelHeight)}
-                    fill="#005CE6"
-                    stroke="#38BDF8"
-                    strokeWidth={1.5}
-                  />
-                </Svg>
-
                 <View style={styles.tileContent}>
                   <Ionicons name="scan" size={44} color="#FFFFFF" style={styles.tileIcon} />
                   <Text style={styles.tileTitle}>AUTO READ</Text>
@@ -616,24 +552,10 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
                 accessibilityHint="Reads classroom plaques, office names, and room numbers"
                 style={({ pressed }) => [
                   styles.tilePressable,
+                  CORNER_PANEL_STYLES.topRight,
                   pressed && styles.tilePressed,
                 ]}
               >
-                <Svg
-                  width={panelWidth}
-                  height={panelHeight}
-                  viewBox={`0 0 ${panelWidth} ${panelHeight}`}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                >
-                  <Path
-                    d={getPanelSvgPath("topRight", panelWidth, panelHeight)}
-                    fill="#00A84D"
-                    stroke="#4ADE80"
-                    strokeWidth={1.5}
-                  />
-                </Svg>
-
                 <View style={styles.tileContent}>
                   <MaterialCommunityIcons
                     name="door-open"
@@ -733,24 +655,10 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
                 accessibilityHint="Extracts course schedules, lecture times, and room assignments"
                 style={({ pressed }) => [
                   styles.tilePressable,
+                  CORNER_PANEL_STYLES.bottomLeft,
                   pressed && styles.tilePressed,
                 ]}
               >
-                <Svg
-                  width={panelWidth}
-                  height={panelHeight}
-                  viewBox={`0 0 ${panelWidth} ${panelHeight}`}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                >
-                  <Path
-                    d={getPanelSvgPath("bottomLeft", panelWidth, panelHeight)}
-                    fill="#FF5500"
-                    stroke="#FB923C"
-                    strokeWidth={1.5}
-                  />
-                </Svg>
-
                 <View style={styles.tileContent}>
                   <Ionicons name="calendar" size={44} color="#FFFFFF" style={styles.tileIcon} />
                   <Text style={styles.tileTitle}>TIMETABLE</Text>
@@ -773,24 +681,10 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
                 accessibilityHint="Summarizes campus bulletins, announcements, and deadlines"
                 style={({ pressed }) => [
                   styles.tilePressable,
+                  CORNER_PANEL_STYLES.bottomRight,
                   pressed && styles.tilePressed,
                 ]}
               >
-                <Svg
-                  width={panelWidth}
-                  height={panelHeight}
-                  viewBox={`0 0 ${panelWidth} ${panelHeight}`}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                >
-                  <Path
-                    d={getPanelSvgPath("bottomRight", panelWidth, panelHeight)}
-                    fill="#7525E6"
-                    stroke="#C084FC"
-                    strokeWidth={1.5}
-                  />
-                </Svg>
-
                 <View style={styles.tileContent}>
                   <Ionicons name="document-text" size={44} color="#FFFFFF" style={styles.tileIcon} />
                   <Text style={styles.tileTitle}>NOTICE</Text>
@@ -892,6 +786,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+    overflow: "hidden",
   },
   tilePressed: {
     opacity: 0.88,

@@ -98,3 +98,50 @@ def test_scene_assist_unconfigured_error(client, monkeypatch):
     )
     assert response.status_code == 503
     assert "Gemini API key is not configured" in response.json()["detail"]
+
+
+def test_scene_assist_targeted_search_keys_found(client, monkeypatch):
+    """When query is 'Where are my keys?', returns grounded search_result with is_found=True."""
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("ENABLE_AI_MOCK", "True")
+    get_settings.cache_clear()
+
+    response = client.post(
+        "/api/v1/ai/scene-assist",
+        json={
+            "image_base64": VALID_B64_JPEG,
+            "query": "Where are my keys?",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "mock_success"
+    assert data["search_result"] is not None
+    search = data["search_result"]
+    assert search["is_found"] is True
+    assert "key" in search["target_object"]
+    assert "lower-left" in search["relative_frame_position"]
+    assert search["next_action"] == "located"
+    assert "lower-left side of the table" in search["spoken_description"]
+
+
+def test_scene_assist_targeted_search_not_found(client, monkeypatch):
+    """When query is for an object not in view, returns is_found=False with camera sweep guidance."""
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("ENABLE_AI_MOCK", "True")
+    get_settings.cache_clear()
+
+    response = client.post(
+        "/api/v1/ai/scene-assist",
+        json={
+            "image_base64": VALID_B64_JPEG,
+            "query": "Where is my laptop?",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["search_result"] is not None
+    search = data["search_result"]
+    assert search["is_found"] is False
+    assert search["next_action"] == "sweep_camera"
+    assert "Slowly sweep the camera" in search["spoken_description"]

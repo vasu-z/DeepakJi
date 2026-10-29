@@ -44,5 +44,29 @@ This document tracks all external code, libraries, and assets used in the **Saar
 
 ---
 
-## Third-Party Code Snippets
-*No third-party code snippets have been copy-pasted into this repository. All external functionality is strictly consumed via licensed package managers.*
+## Third-Party Architectural References & Inspirations
+
+The live scene understanding architecture in Saarthi synthesizes best practices from 4 audited reference repositories:
+
+1. **GoogleCloudPlatform / generative-ai (`multimodal-live-api/websocket-demo-app`)**
+   - **Repository**: [https://github.com/GoogleCloudPlatform/generative-ai](https://github.com/GoogleCloudPlatform/generative-ai)
+   - **License**: Apache-2.0
+   - **Contribution**: Bidirectional WebSocket protocol, setup handshake, realtime media chunk transmission, and server content event parsing.
+   - **Affected Files**: `backend/app/services/live_session.py`, `backend/app/api/routes/ai.py`, `mobile/src/api/client.ts`.
+
+2. **rkchellah / Nux**
+   - **Repository**: [https://github.com/rkchellah/Nux](https://github.com/rkchellah/Nux)
+   - **Contribution**: Long-lived single session management, client-side camera streaming loop with barge-in speech interruption.
+   - **Affected Files**: `mobile/src/services/liveAssistService.ts`, `backend/app/api/routes/ai.py`.
+
+3. **Digitalbrainstem / atlas-sight**
+   - **Repository**: [https://github.com/Digitalbrainstem/atlas-sight](https://github.com/Digitalbrainstem/atlas-sight)
+   - **Contribution**: Assistive navigation principles for visually impaired users: concise 1–2 sentence spoken descriptions of surroundings (doors, obstacles, stairs) without visual jargon.
+   - **Affected Files**: `backend/app/services/scene_grounding.py`.
+
+4. **nicedreamzapp / RealTimeAICam**
+   - **Repository**: [https://github.com/nicedreamzapp/RealTimeAICam](https://github.com/nicedreamzapp/RealTimeAICam)
+   - **License**: AGPL-3.0 (Zero code copied to strictly honor AGENTS.md license restrictions and keep Saarthi Apache-2.0 compliant).
+   - **Contribution**: Conceptual cadence loop pattern: camera rotation sensing, duplicate description suppression window, and TalkBack / VoiceOver spoken announcements.
+   - **Affected Files**: `mobile/src/services/liveAssistService.ts`, `mobile/src/screens/CameraAssistScreen.tsx`.
+
